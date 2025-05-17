@@ -1,0 +1,130 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.linalg import expm
+
+# --- 1. Data Loading and Preparation ---
+
+def load_data_from_csv(file_path):
+    """
+    Load OHLCV time series data from a CSV file and preprocess columns.
+
+    :param file_path: Path to the CSV file.
+    :return: Preprocessed pandas DataFrame.
+    """
+    df = pd.read_csv(file_path, low_memory=False)
+    df.columns = df.columns.str.strip()  # Remove leading/trailing whitespace
+
+    # Parse timestamp
+    if 'Close Time' in df.columns:
+        # Binance/Kraken export: millisecond unix time
+        df['Close Time'] = pd.to_datetime(df['Close Time'], unit='ms', errors='coerce')
+        df = df.dropna(subset=['Close Time'])
+        df.set_index('Close Time', inplace=True)
+    elif 'Date' in df.columns:
+        # Generic OHLCV
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df = df.dropna(subset=['Date'])
+        df.set_index('Date', inplace=True)
+    else:
+        raise ValueError("No recognizable datetime column found!")
+
+    # Ensure numeric columns
+    numeric_columns = ['Close', 'High', 'Low', 'Volume']
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    df = df.dropna()  # Drop any rows with missing values
+    return df
+
+# --- 2. State Assignment ---
+
+def assign_market_states(df, up=0.005, down=-0.005, neutral=0.002):
+    """
+    Assign market state (rising, falling, stagnating) to each time step.
+
+    :param df: DataFrame with 'Close' prices.
+    :param up: Threshold for 'rising' state (e.g., +0.5%).
+    :param down: Threshold for 'falling' state (e.g., -0.5%).
+    :param neutral: Range for 'stagnating' state (e.g., +/- 0.2%).
+    :return: DataFrame with 'Price Change' and 'State' columns.
+    """
+    df['Price Change'] = df['Close'].pct_change()
+    df['State'] = 'stagnating'
+    df.loc[df['Price Change'] > up, 'State'] = 'rising'
+    df.loc[df['Price Change'] < down, 'State'] = 'falling'
+    # Optionally: further refine 'stagnating'
+    return df
+
+# --- 3. Quantum-Inspired Markov Simulation ---
+
+def quantum_markov_simulation(num_steps, dt=0.01, H=None, psi0=None):
+    """
+    Simulate the evolution of market states using a quantum-inspired Hamiltonian.
+
+    :param num_steps: Number of time steps to simulate.
+    :param dt: Time increment per step.
+    :param H: Hamiltonian (transition matrix, 3x3 complex ndarray).
+    :param psi0: Initial state vector (superposition, 3-element complex ndarray).
+    :return: Arrays of state probabilities over time (p_rising, p_falling, p_stagnating).
+    """
+    # Default Hamiltonian: customizable
+    if H is None:
+        H = np.array([
+            [1.0, 0.1, 0.05],
+            [0.1, 0.5, 0.05],
+            [0.05, 0.05, 0.0]
+        ], dtype=complex)
+
+    # Default: equal superposition
+    if psi0 is None:
+        psi0 = np.array([1/np.sqrt(3), 1/np.sqrt(3), 1/np.sqrt(3)], dtype=complex)
+
+    psi_t = np.zeros((num_steps+1, 3), dtype=complex)
+    psi_t[0] = psi0
+
+    # Unitary evolution operator
+    U = expm(-1j * H * dt)
+
+    for i in range(num_steps):
+        psi_t[i+1] = U @ psi_t[i]
+        psi_t[i+1] /= np.linalg.norm(psi_t[i+1])  # Keep normalization for stability
+
+    # Extract probabilities for each state
+    p_rising = np.abs(psi_t[:, 0])**2
+    p_falling = np.abs(psi_t[:, 1])**2
+    p_stagnating = np.abs(psi_t[:, 2])**2
+
+    return p_rising, p_falling, p_stagnating
+
+# --- 4. Main Functionality: Example Usage ---
+
+if __name__ == "__main__":
+    # Change this path to your data file
+    csv_file = "YOUR_OHLCV_FILE.csv"
+    df = load_data_from_csv(csv_file)
+    df = assign_market_states(df)
+
+    print("State counts:\n", df['State'].value_counts())
+
+    steps = len(df) - 1
+    dt = 0.01
+
+    # Simulate quantum-inspired evolution
+    p_rising, p_falling, p_stagnating = quantum_markov_simulation(steps, dt=dt)
+
+    times = np.linspace(0, dt*steps, steps+1)
+
+    # --- 5. Visualization ---
+    plt.figure(figsize=(10, 6))
+    plt.plot(times, p_rising, label="Rising")
+    plt.plot(times, p_falling, label="Falling")
+    plt.plot(times, p_stagnating, label="Stagnating")
+    plt.xlabel("Time")
+    plt.ylabel("Probability")
+    plt.title("Quantum-Inspired State Probabilities for Market Dynamics")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
